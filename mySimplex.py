@@ -1,3 +1,4 @@
+from typing import Iterator
 import numpy as np 
 import sympy
 import itertools
@@ -117,8 +118,6 @@ def fase1(A,b):
 	basic_indices = list(range(N, N + M))
 	B = A_[:, basic_indices]
 
-	opt_infinity = False
-
 	while True:
 		# calcula x_b, c_b, B_inv
 		B_inv = np.linalg.inv(B)
@@ -142,10 +141,6 @@ def fase1(A,b):
 				break
 
 		d_b = -1.0 * np.dot(B_inv, A_[:, chosen_j])
-		# checa se a solução ótima é infinita
-		if (d_b >= 0).all():
-			opt_infinity = True
-			break
 
 		# Verifica se a base escolhida é L. I.
 		l = None
@@ -194,8 +189,8 @@ def fase1(A,b):
 	basic_indices.sort()
 
 	return basic_indices
-	
-def simplex(A,b,c,B_i,t="max"):
+
+def simplex(A, b, c, B_i,t="max"):
 	"""
 	A -> Matriz do problema
 	b -> Vetor de restrições
@@ -205,74 +200,84 @@ def simplex(A,b,c,B_i,t="max"):
 	retorna:
 		c-> Vetor x ótimo 
 	"""
-
-	if t == "min":
+	if t == "max":
 		c = -c
+
+	if matrix_rank(A) < min(A.shape[0], A.shape[1]):
+		print('A is not full rank, dropping redundant rows')
+		_, pivots = sympy.Matrix(A).T.rref()
+		A = A[list(pivots)]
+		print('Shape of A after dropping redundant rows is {}'.format(A.shape))
+
+	indices = list(range(A.shape[1]))
+
+	B = A[:, B_i]
+	optimal = False
+	opt_infinity = False
+	iterator = 0
+
+	while not optimal:
+		# calcula x_b, c_b, B_inv
+		iterator+=1
+		print("Passo Simplex: ", iterator, "\n")
+		B_inv = np.linalg.inv(B)
+		x_b = np.dot(B_inv, b)
+		if (x_b == 0.0).any():
+			print('simplex: alert! this bfs is degenerate')
+		c_b = c[B_i]
+
+		obj_val = 0.0
+		for i, b_i in enumerate(B_i):
+			obj_val += (c[b_i] * x_b[i])
+
+		reduced_costs = {}
+		for j in indices:
+			if j not in B_i:
+				A_j = A[:, j]
+				reduced_costs[j] = c[j] - np.dot(c_b.T, np.dot(B_inv, A_j))
+
+		if (np.array(list(reduced_costs.values())) >= 0.0).all():
+			break
+
+		chosen_j = None
+		for j in reduced_costs.keys():
+			if reduced_costs[j] < 0.0:
+				chosen_j = j
+				break
+
+		d_b = -1.0 * np.dot(B_inv, A[:, chosen_j])
+		if (d_b >= 0).all():
+			opt_infinity = True
+			break
+
+		l = None
+		theta_star = None
+		for i, basic_index in enumerate(B_i):
+			if d_b[i] < 0:
+				if l is None:
+					l = i
+				if -x_b[i]/d_b[i] < -x_b[l]/d_b[l]:
+					l = i
+					theta_star = -x_b[i]/d_b[i]
+
+		B_i[l] = chosen_j
+		B_i.sort()
+		B = A[:, list(B_i)]
+
 	
-	z = 0
+	if opt_infinity:
+		print('O problema é ilimitado')
+		return -1
 
-	while True:
-
-		A,b,c,x_b = formaCanonica(A,b,c,B_i)
-
-		if (c<=0.0001).all():
-			print(c)
-			x = np.zeros(shape=(A.shape[1], ))
-			for i in range(x.shape[0]):
-				if i in B_i:
-					x[i] = x_b[B_i.index(i)]
-			return x
-		print(A,b,c)
-		j = 0
-		while j < len(c):
-			maxx = 0
-			k = 0
-			if c[j] > maxx:
-				maxx = c[j]
-				k = j
-			j+=1
-		print(c)
-		Ak = A[:,k]
-		if (Ak<= 0.001).all():
-			return "O problema é ilimitado"
-		i = 0
-		minn = 1000000
-		while i < len(Ak): 
-			if (Ak[i]>0):
-				if minn >= b[i]/Ak[i]:
-					print(Ak[i])
-					minn = (b[i]/Ak[i])
-					min_i = i
-			i+=1
+	x = np.zeros(shape=(A.shape[1], ))
+	for i in range(x.shape[0]):
+		if i in B_i:
+			x[i] = x_b[B_i.index(i)]
+	if t== "max":
+		return -x@c, x
+	else:
+		return x@c, x
 		
-		B_i[min_i] = k
-
-def simplexFase1(A,b,c,sinaisDes,xRes):
-	A,c = formaPadrao(A,b,c,sinaisDes,xRes)
-
-	n = len(A[0])
-	print(n)
-	A = np.concatenate([A, np.eye(len(A))],axis=1)
-
-	w = np.zeros(len(A[0]))
-
-	j = 0
-	while j <n:
-		i = 0
-		while i <len(A):
-			w[j] += A[i,j]
-			i+=1
-		j+=1
-	
-	print(w)
-				
-
-	print(A, c)
-
-	v,A = tableau(A,b,w,list(range(n,len(A[0]))))
-
-	print(A)
-	
 
 def tableau(A,b,c,B_i,t="max"):
 	print(B_i)
@@ -285,98 +290,80 @@ def tableau(A,b,c,B_i,t="max"):
 		A = np.concatenate([-np.array([np.hstack((-1,c))]),A],axis=0)
 	else:
 		A = np.concatenate([np.array([np.hstack((-1,c))]),A],axis=0)
-	#print(A,B_i)
 	iteration = 0
 	while True:
 		iteration+=1
 		ci = A[0] 
-        # print("Simplex Tableau: ", iteration)
-        # print(A)
+		print("Simplex Tableau: ", iteration)
+		print(A)
 		minn = np.min(ci[:len(ci)-1])
 		if minn >= 0:
 			return ci[len(ci)-1], A
 		cond = (ci == minn)
-		index1 = np.where(cond)[0][0]
+		col = np.where(cond)[0][0]
 		j = 0
-		while index1 in B_i:
-			index1 = list(range(1,len(ci)))[j]
+		while col in B_i:
+			col = list(range(1,len(ci)))[j]
 			#print(index1)
 			j+=1
 		j = 1
 		b_j = np.zeros(len(A))
-		A_index1 = A[:,index1] 
+		A_col = A[:,col] 
 		#print(A_index1)
 		# print("foi foi foi\n",index1)
-		if (A_index1 <= 0).all():
+		if (A_col <= 0).all():
 			print("O problema é ilimitado")
 			return 
 		while j < len(A):
-			if A[j,index1] <= 0:
+			if A[j,col] <= 0:
 				b_j[j] = np.inf
 			else:
-				b_j[j] = A[j,len(ci)-1]/A[j,index1]
+				b_j[j] = A[j,len(ci)-1]/A[j,col]
 			j+=1
 		#print(b_j)
 		row = np.min(b_j[1:])
 		cond = (b_j == row)
-		index2 = np.where(cond)[0][0]
+		row = np.where(cond)[0][0]
 		#print(index2)
-		A[index2] = A[index2]/A[index2,index1]
+		A[row] = A[row]/A[row,col]
 		j = 0
 		while j < len(A):
-			if j == index2 or A[j,index1]==0:
+			if j == row or A[j,col]==0:
 				j+=1
 				continue
-			A[j] = A[j] - A[j,index1]*A[index2]
+			A[j] = A[j] - A[j,col]*A[row]
 			j+=1
 		#print(A)
 		B_i = []
 		j = 1
 		while j < len(A[0]):
-			if abs(A[0][j])<= 0.000001:
+			if abs(A[0][j])<= 0.0000001:
 				B_i.append(j)
 			j+=1
-		# if iteration == 5:
-		# 	break	
+
+def simplex2fases(A,b,c,t="max"):
+	B_i = fase1(A,b)
+	return simplex(A,b,c,B_i,t)
 
 
-A = np.array([[1,2,4,7,3],[2,8,9,0,0],[1,1,0,2,6],[-3,4,3,1,-1]])
-b = np.array([1,2,3,4])
-c = np.array([2,-1,4,2,4])
+A = np.array([[2,1,1,0,0],[2,3,0,1,0],[3,1,0,0,1]])
+b = np.array([18,42,24])
+c = np.array([3,2,0,0,0])
 
-#A_1, c_1 = formaPadrao(A,b,c,["<=","=",">=",">="],[">=0",">=0","real",">=0","real"])
-
-# print("\nTeste forma padrão")
-# print(c_1,"\n",A_1)
-
-# A2 = np.array([[0,2,2,1,0],[2,1,1,1,1]])
-# b2 = np.array([1,0])
-# c2 = np.array([1,3,2,0,0])
-
-A2 = np.array([[1,2,2,1],[0,2,3,2]])
+A2 = np.array([[1,2,2,1,1,0],[0,2,3,2,0,1]])
 b2 = np.array([6,10])
-c2 = np.array([1,2,3,2])
+c2 = np.array([0,2,3,2,0,0])
 
-print(fase1(A2,b2))
+print(fase1(A,b))
 
-#simplexFase1(A,b,c,["<=","=",">=",">="],[">=0",">=0","real",">=0","real"])
+print("Teste Simplex 2 fases")
 
-# print(A2[:,base])
+print(simplex2fases(A,b,c))
 
-# print(solve(c2,A2,b2))
+print("\n")
 
-#simplex(A2,b2,c2,base)
+print("Teste Simplex Tableau")
 
+print(tableau(A2,b2,c2,[4,5]))
 
-# print("\nTeste forma Canonica")
-# print(formaCanonica(A2,b2,c2,[0,3]))
-
-# print("\nTeste passo simplex")
-# x2 = simplex(A2,b2,c2,[0,3])
-# print(simplex(A2,b2,c2,[0,3]))
-# print(A2@x2)
-# print(b2)
-# print("\n\n")
-
-#print(A2)
-#tableau(A2,b2,c2,[3,2])
+print("\n")
